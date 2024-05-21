@@ -30,7 +30,9 @@ type ZoomableProps = PropsWithChildren<{
   maxScale?: number;
   threshold?: number;
   disabled?: boolean;
+  shouldCenterAfterThreshold?: boolean;
   disablePanResponderReleaseAction?: boolean;
+  disableOvershooting?: boolean;
 }>;
 
 type TouchPosition = Pick<
@@ -76,7 +78,9 @@ const Zoomable = (
     threshold = THRESHOLD,
     maxScale = initialScale * 2,
     disabled = false,
+    shouldCenterAfterThreshold = false,
     disablePanResponderReleaseAction = false,
+    disableOvershooting = false,
     children,
   }: ZoomableProps,
   ref: Ref<ZoomableRef>
@@ -236,16 +240,20 @@ const Zoomable = (
             // If the user tries to pan the image out of the threshold,
             // translate it back to the threshold with a spring animation
             const toValue = {
-              x: overflowX
-                ? Math.sign(translateX.value) *
-                  (scale.value / initialScale) *
-                  threshold
-                : translateX.value,
-              y: overflowY
-                ? Math.sign(translateY.value) *
-                  (scale.value / initialScale) *
-                  threshold
-                : translateY.value,
+              x: shouldCenterAfterThreshold
+                ? 0
+                : overflowX
+                  ? Math.sign(translateX.value) *
+                    (scale.value / initialScale) *
+                    threshold
+                  : translateX.value,
+              y: shouldCenterAfterThreshold
+                ? 0
+                : overflowY
+                  ? Math.sign(translateY.value) *
+                    (scale.value / initialScale) *
+                    threshold
+                  : translateY.value,
             };
 
             translateX.value = withTiming(toValue.x, {
@@ -255,6 +263,9 @@ const Zoomable = (
               duration: 100,
             });
           } else {
+            if (disableOvershooting) {
+              return;
+            }
             // If the user pans within the threshold,
             // translate it to the direction of the pan with a slow animation to indicate the end of the gesture
             const toValue = {
@@ -276,11 +287,13 @@ const Zoomable = (
       })
     );
   }, [
+    disableOvershooting,
     disablePanResponderReleaseAction,
     disabled,
     initialScale,
     maxScale,
     scale,
+    shouldCenterAfterThreshold,
     threshold,
     translateX,
     translateY,

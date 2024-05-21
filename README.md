@@ -30,7 +30,7 @@ yarn add react-native-reanimated-zoomable
 
 | Name                 | version                   |    
 |----------------------|:-------------------------------------------------:|
-| `react-native-reanimated`                | >= 2.0.0       |
+| `react-native-reanimated`                | >= 3.5.0       |
 
 ## Interfaces and Types 🛠️
 

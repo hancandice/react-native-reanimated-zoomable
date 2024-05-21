@@ -103,6 +103,41 @@ export default App;
 | `disablePanResponderReleaseAction`               | Disables the pan responder release action.                                                                 | boolean                                                 | _**false**_ |
 
 
+## Troubleshooting ⚒️
+### Multiple Versions of Reanimated Were Detected
+#### Problem:
+This error usually occurs when you have installed different versions of Reanimated in your project.
+
+#### Solution:
+Modify your `package.json` file to ensure only one version of Reanimated is used:
+
+* For Yarn: Add the resolutions property.
+
+```json
+"resolutions": {
+  "react-native-reanimated": "<Reanimated version>"
+}
+```
+
+* For npm: Add the overrides property.
+
+```json
+"overrides": {
+  "react-native-reanimated": "<Reanimated version>"
+}
+```
+
+After updating your `package.json`, make sure to run your package manager again:
+
+* Yarn: 
+```sh
+yarn install
+```
+* npm: 
+```sh
+npm install
+```
+
 ## Contributions 🤝
 Contributions are welcome! If you have any suggestions, feature requests, or bug reports, feel free to open an issue or submit a pull request. Let's make this component even better together! 😃
 

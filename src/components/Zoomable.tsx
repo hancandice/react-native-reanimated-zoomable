@@ -16,9 +16,8 @@ import Animated, {
   useAnimatedStyle,
   useSharedValue,
   withTiming,
-  type AnimateStyle,
-  type AnimatedStyleProp,
 } from 'react-native-reanimated';
+import type { AnimatedView } from 'react-native-reanimated/lib/typescript/reanimated2/component/View';
 import { isAndroid } from '../utils/platform';
 
 export interface ZoomableRef {
@@ -26,7 +25,7 @@ export interface ZoomableRef {
 }
 
 type ZoomableProps = PropsWithChildren<{
-  style?: AnimateStyle<ViewStyle>;
+  style?: ViewStyle;
   initialScale?: number;
   maxScale?: number;
   threshold?: number;
@@ -91,7 +90,7 @@ const Zoomable = (
   const translateX = useSharedValue<number>(0);
   const translateY = useSharedValue<number>(0);
 
-  const containerView = useRef<Animated.View>();
+  const containerView = useRef<AnimatedView>();
   const layout = useRef<Layout>();
   const lastTransform = useRef({
     scale: initialScale,
@@ -294,7 +293,7 @@ const Zoomable = (
         { translateY: translateY.value },
         { scale: scale.value },
       ],
-    } as AnimatedStyleProp<ViewStyle>;
+    };
   }, [scale, translateX, translateY]);
 
   useImperativeHandle(ref, () => ({
@@ -330,7 +329,7 @@ const Zoomable = (
   return (
     <Animated.View
       ref={(zoomableViewRef) => {
-        containerView.current = zoomableViewRef as Animated.View;
+        containerView.current = zoomableViewRef as AnimatedView;
       }}
       style={[style, style?.transform ? {} : animStyle]}
       {...panResponder?.panHandlers}

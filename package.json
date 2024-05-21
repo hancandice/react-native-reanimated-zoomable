@@ -37,7 +37,27 @@
   "keywords": [
     "react-native",
     "ios",
-    "android"
+    "android",
+    "zoom",
+    "react-native-zoomable",
+    "react-native-zoom",
+    "zoomable-view",
+    "react-native-image-cropper",
+    "react-native-image-zoom",
+    "react-native-image",
+    "react-native-video-zoom",
+    "react-native-zoom-video",
+    "image-zoom",
+    "zoomable-image",
+    "video-zoom",
+    "crop-zoom",
+    "zoom-view",
+    "image-cropper",
+    "gallery",
+    "pinch",
+    "pan",
+    "pan-gesture",
+    "reanimated"
   ],
   "repository": {
     "type": "git",

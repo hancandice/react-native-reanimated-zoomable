@@ -1,3 +1,3 @@
-import { Zoomable, type ZoomableRef } from './components/Zoomable';
+import { Zoomable } from './components/Zoomable';
 
-export { Zoomable, type ZoomableRef };
+export { Zoomable };

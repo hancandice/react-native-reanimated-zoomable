@@ -1,6 +1,6 @@
 {
   "name": "react-native-reanimated-zoomable",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "[React Native | TypeScript | Reanimated] Pure TS component that offers zooming and dragging functionalities for its child components. It seamlessly operates on both Android and iOS platforms.",
   "main": "lib/commonjs/index",
   "module": "lib/module/index",

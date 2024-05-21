@@ -60,9 +60,9 @@ Sets the scale and translation values of the view.
 ## Usage 🚀
 
 ```jsx
-import { Zoomable, ZoomableRef } from 'react-native-reanimated-zoomable';
-import { View, Text, Button } from 'react-native';
-import React, { createRef } from 'react';
+import React, { createRef } from "react";
+import { Button, Image, View } from "react-native";
+import { Zoomable, ZoomableRef } from "react-native-reanimated-zoomable";
 
 const zoomableRef = createRef<ZoomableRef>();
 const INITIAL_ZOOM = 1; // Initial zoom scale value

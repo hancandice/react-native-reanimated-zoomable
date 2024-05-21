@@ -1,3 +1,4 @@
-export function multiply(a: number, b: number): Promise<number> {
-  return Promise.resolve(a * b);
-}
+import { Zoomable, type ZoomableRef } from './components/Zoomable';
+
+export default Zoomable;
+export type { ZoomableRef };

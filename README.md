@@ -21,8 +21,14 @@ yarn add react-native-reanimated-zoomable
 
 ## Preview 🦋
 
+* When `shouldCenterAfterThreshold` is **true** and `disableOvershooting` is **true**
 <p align="center">
-<img src="https://github.com/githuboftigran/rn-range-slider/assets/64334381/67a30692-9445-457d-a904-6d3bb67c930b" width="369">
+<img src="https://github.com/hancandice/react-native-reanimated-zoomable/assets/64334381/3f6b9dc9-ddf5-425b-89c3-e2922fa76623" width="369">
+</p>
+
+* When `shouldCenterAfterThreshold` is **false** and `disableOvershooting` is **false**
+<p align="center">
+<img src="https://github.com/hancandice/react-native-reanimated-zoomable/assets/64334381/de6c0f8e-5628-49e2-992b-15e528228349" width="369">
 </p>
 
 
@@ -59,7 +65,7 @@ import { View, Text, Button } from 'react-native';
 import React, { createRef } from 'react';
 
 const zoomableRef = createRef<ZoomableRef>();
-const INITIAL_ZOOM = 1.5; // Initial zoom scale value
+const INITIAL_ZOOM = 1; // Initial zoom scale value
 
 export const setToInitialZoomableSetup = () => {
   zoomableRef.current?.setValues({ scale: INITIAL_ZOOM, translate: { x: 0, y: 0 } });
@@ -71,16 +77,21 @@ const App = () => {
   };
 
   return (
-    <View style={{ flex: 1 }}>
+    <View style={{ flex: 1, padding: 10 }}>
       <Zoomable
         ref={zoomableRef}
-        style={{ flex: 1 }}
+        style={{ flex: 1, justifyContent: "center", alignItems: "center" }}
+        disablePanResponderReleaseAction={false}
+        threshold={300}
+        shouldCenterAfterThreshold
+        disableOvershooting
         initialScale={INITIAL_ZOOM}
-        disablePanResponderReleaseAction={true}
+        maxScale={4}
       >
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-          <Text>Zoomable and Draggable View</Text>
-        </View>
+        <Image
+          source={{ uri: "https://picsum.photos/id/2/1000/1000" }}
+          style={{ height: 400, width: 400 }}
+        />
       </Zoomable>
       <Button title="Reset Zoom" onPress={handleResetZoom} />
     </View>
@@ -98,10 +109,11 @@ export default App;
 | `style`                | Style object for the container view.                                                                                                                                                                                                                                                                              | ViewStyle                                                 |                  _{ }_                   |
 | `initialScale`                | Initial scale value for the view.                                                                                                                                                                                                                                               | number                                                 |                  _**1**_                   |
 | `maxScale`           | Maximum allowed scale for the view.                       | number                                                 |                        _**initialScale * 2**_                           |
-| `threshold`               | The threshold value specifies the threshold for panning gestures to take effect.<br /> This functionality works **only** when **disablePanResponderReleaseAction** is set to **false(default)**.<br /> If the user attempts to pan the view beyond the specified threshold, the view is translated back to the threshold position with a spring animation.                                                                                                                                                                                                                                                                                  | number                                                 |                        _**560**_                         |
-| `disabled`                | Disables the zooming and dragging functionality.                                                                                                                                                                                                                                                                | boolean                                                 |  _**false**_   |
-| `disablePanResponderReleaseAction`               | Disables the pan responder release action.                                                                 | boolean                                                 | _**false**_ |
-
+| `disablePanResponderReleaseAction`               | The `disablePanResponderReleaseAction` prop determines whether certain actions should be taken when the user releases a panning gesture.                                                                 | boolean                                                 | _**false**_ |
+| `threshold`               | The threshold here represents a numeric value that defines a limit for how far the user can pan the view before triggering a specific action. <br /> Threshold functionality won't be active if `disablePanResponderReleaseAction` is set to **true**.<br /> If `shouldCenterAfterThreshold` is set to **false** (default) and a user attempts to pan the view beyond the specified threshold, it will spring back to the threshold position. However, if `shouldCenterAfterThreshold` is set to **true**, the view will instead center itself.                                                                                                                                                                                                                                                               | number                                                 |                        _**560**_                         |
+| `shouldCenterAfterThreshold`               | The `shouldCenterAfterThreshold` prop determines whether the view should automatically center itself after the user exceeds the specified threshold while panning.                                                                                                                                                                                                                                                               | boolean                                                 |                        _**false**_                         |
+| `disableOvershooting`               | The `disableOvershooting` prop controls whether the view should exhibit an overshooting effect when the user releases a panning gesture. <br /> When `disableOvershooting` is set to **true**, the view will not display any overshooting animation after the user releases a panning gesture. This means that the view will come to an immediate stop at the exact point where the user lifts their finger or releases the gesture.                                                                                                                                                                                                                                                              | boolean                                                 |                        _**false**_                         |
+| `disabled`               | The `disabled` prop is used to control whether the zooming and panning functionality of a component is enabled or disabled.                                                                                                                                                                                                                                                             | boolean                                                 |                        _**false**_                         |
 
 ## Troubleshooting ⚒️
 ### Multiple Versions of Reanimated Were Detected

@@ -155,5 +155,8 @@
         }
       ]
     ]
+  },
+  "dependencies": {
+    "react-native-reanimated": "^2.0.0"
   }
 }

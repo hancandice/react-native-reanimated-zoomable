@@ -70,7 +70,7 @@ const getRelativeTouchesCenterPosition = (
   };
 };
 
-const THRESHOLD = 560;
+const THRESHOLD = 300;
 const Zoomable = (
   {
     style,

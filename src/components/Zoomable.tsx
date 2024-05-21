@@ -224,8 +224,9 @@ const Zoomable = (
           if (disablePanResponderReleaseAction) {
             return;
           }
+
           if (isZoom.current) {
-            // if it was a zoom gesture, do not trigger any animation
+            // If it was a zoom gesture, do not trigger any animation
             isZoom.current = false;
             return;
           }
@@ -236,52 +237,50 @@ const Zoomable = (
           const overflowY =
             Math.abs(translateY.value) / (scale.value / initialScale) >
             threshold;
+
+          const toValue = {
+            x: translateX.value,
+            y: translateY.value,
+          };
+
           if (overflowX || overflowY) {
             // If the user tries to pan the image out of the threshold,
             // translate it back to the threshold with a spring animation
-            const toValue = {
-              x: shouldCenterAfterThreshold
-                ? 0
-                : overflowX
-                  ? Math.sign(translateX.value) *
-                    (scale.value / initialScale) *
-                    threshold
-                  : translateX.value,
-              y: shouldCenterAfterThreshold
-                ? 0
-                : overflowY
-                  ? Math.sign(translateY.value) *
-                    (scale.value / initialScale) *
-                    threshold
-                  : translateY.value,
-            };
+            if (shouldCenterAfterThreshold) {
+              toValue.x = 0;
+              toValue.y = 0;
+            } else {
+              if (overflowX) {
+                toValue.x =
+                  Math.sign(translateX.value) *
+                  (scale.value / initialScale) *
+                  threshold;
+              }
+              if (overflowY) {
+                toValue.y =
+                  Math.sign(translateY.value) *
+                  (scale.value / initialScale) *
+                  threshold;
+              }
+            }
 
-            translateX.value = withTiming(toValue.x, {
-              duration: 100,
-            });
-            translateY.value = withTiming(toValue.y, {
-              duration: 100,
-            });
+            translateX.value = withTiming(toValue.x, { duration: 100 });
+            translateY.value = withTiming(toValue.y, { duration: 100 });
           } else {
             if (disableOvershooting) {
               return;
             }
             // If the user pans within the threshold,
             // translate it to the direction of the pan with a slow animation to indicate the end of the gesture
-            const toValue = {
-              x:
-                translateX.value *
-                (Math.sign(dx) * Math.sign(translateX.value) > 0 ? 1.1 : 0.9),
-              y:
-                translateY.value *
-                (Math.sign(dy) * Math.sign(translateY.value) > 0 ? 1.1 : 0.9),
-            };
-            translateX.value = withTiming(toValue.x, {
-              duration: 1000,
-            });
-            translateY.value = withTiming(toValue.y, {
-              duration: 1000,
-            });
+            toValue.x =
+              translateX.value *
+              (Math.sign(dx) * Math.sign(translateX.value) > 0 ? 1.1 : 0.9);
+            toValue.y =
+              translateY.value *
+              (Math.sign(dy) * Math.sign(translateY.value) > 0 ? 1.1 : 0.9);
+
+            translateX.value = withTiming(toValue.x, { duration: 1000 });
+            translateY.value = withTiming(toValue.y, { duration: 1000 });
           }
         },
       })

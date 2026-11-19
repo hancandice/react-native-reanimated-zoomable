@@ -4,6 +4,7 @@ import {
   useEffect,
   useImperativeHandle,
   useMemo,
+  useRef,
   type ForwardedRef,
   type ReactNode,
 } from 'react';
@@ -225,6 +226,10 @@ const ZoomableComponent = (
 
   // gesture bookkeeping (UI thread only)
   const startScale = useSharedValue(1);
+  const startRawScale = useSharedValue(1);
+  const rawScale = useSharedValue(1);
+  const startPinch = useSharedValue(1);
+  const pointerCount = useSharedValue(0);
   const startX = useSharedValue(0);
   const startY = useSharedValue(0);
   const startFocalX = useSharedValue(0);
@@ -236,16 +241,17 @@ const ZoomableComponent = (
   const touchStartX = useSharedValue(0);
   const touchStartY = useSharedValue(0);
 
-  const emitStart = useCallback(() => {
-    onInteractionStart?.();
-  }, [onInteractionStart]);
+  // Latest callbacks, so that inline functions do not rebuild the gestures.
+  const listeners = useRef({ onInteractionStart, onInteractionEnd });
+  listeners.current = { onInteractionStart, onInteractionEnd };
 
-  const emitEnd = useCallback(
-    (s: number, x: number, y: number) => {
-      onInteractionEnd?.({ scale: s, translate: { x, y } });
-    },
-    [onInteractionEnd]
-  );
+  const emitStart = useCallback(() => {
+    listeners.current.onInteractionStart?.();
+  }, []);
+
+  const emitEnd = useCallback((s: number, x: number, y: number) => {
+    listeners.current.onInteractionEnd?.({ scale: s, translate: { x, y } });
+  }, []);
 
   const hasStartListener = onInteractionStart != null;
   const hasEndListener = onInteractionEnd != null;
@@ -359,6 +365,26 @@ const ZoomableComponent = (
       notifyEnd(targetScale, x, y);
     };
 
+    /** (Re)anchors the pinch so that a change of pointers does not jump. */
+    const anchorPinch = (
+      focalX: number,
+      focalY: number,
+      pinchScale: number,
+      pointers: number
+    ) => {
+      'worklet';
+      startScale.value = scale.value;
+      startRawScale.value = rawScale.value;
+      startPinch.value = pinchScale > 0 ? pinchScale : 1;
+      startX.value = translateX.value;
+      startY.value = translateY.value;
+      startFocalX.value = focalX - centerX.value;
+      startFocalY.value = focalY - centerY.value;
+      lastFocalX.value = startFocalX.value;
+      lastFocalY.value = startFocalY.value;
+      pointerCount.value = pointers;
+    };
+
     const pinch = Gesture.Pinch()
       .enabled(!disabled)
       .onStart((e) => {
@@ -366,21 +392,27 @@ const ZoomableComponent = (
         notifyStart();
         stopAnimations();
         pinching.value = true;
-        startScale.value = scale.value;
-        startX.value = translateX.value;
-        startY.value = translateY.value;
-        startFocalX.value = e.focalX - centerX.value;
-        startFocalY.value = e.focalY - centerY.value;
-        lastFocalX.value = startFocalX.value;
-        lastFocalY.value = startFocalY.value;
+        rawScale.value = scale.value;
+        anchorPinch(e.focalX, e.focalY, e.scale, e.numberOfPointers);
       })
       .onUpdate((e) => {
         'worklet';
         if (!pinching.value) {
           return;
         }
+        // When a finger is lifted (or added) the focal point jumps to the
+        // remaining fingers: ignore single-finger updates and re-anchor.
+        if (e.numberOfPointers < 2) {
+          pointerCount.value = e.numberOfPointers;
+          return;
+        }
+        if (e.numberOfPointers !== pointerCount.value) {
+          anchorPinch(e.focalX, e.focalY, e.scale, e.numberOfPointers);
+          return;
+        }
+        rawScale.value = (startRawScale.value * e.scale) / startPinch.value;
         const s = rubberBandScale(
-          startScale.value * e.scale,
+          rawScale.value,
           minScale,
           maxScale,
           SCALE_RUBBER_BAND
@@ -576,6 +608,10 @@ const ZoomableComponent = (
     startFocalX,
     startFocalY,
     startScale,
+    startRawScale,
+    rawScale,
+    startPinch,
+    pointerCount,
     startX,
     startY,
     touchStartX,
@@ -616,8 +652,7 @@ const ZoomableComponent = (
         minScale,
         safeThreshold
       );
-    },
-    [panBoundary, minScale, safeThreshold]
+    }
   );
 
   // Keep the scale valid when the limits change.

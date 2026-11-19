@@ -678,10 +678,23 @@ const ZoomableComponent = (
         }
       });
 
+    // A symmetric pinch keeps the centroid still, so the tap gestures must
+    // explicitly fail as soon as a second finger touches the screen.
+    const failOnMultiTouch = (
+      e: { numberOfTouches: number },
+      manager: { fail: () => void }
+    ) => {
+      'worklet';
+      if (e.numberOfTouches > 1) {
+        manager.fail();
+      }
+    };
+
     const doubleTap = Gesture.Tap()
       .enabled(!disabled && (doubleTapToZoom || hasDoubleTap))
       .numberOfTaps(2)
       .maxDistance(24)
+      .onTouchesDown(failOnMultiTouch)
       .onEnd((e, success) => {
         'worklet';
         if (!success || pinching.value || panning.value) {
@@ -729,6 +742,7 @@ const ZoomableComponent = (
     const singleTap = Gesture.Tap()
       .enabled(!disabled && hasSingleTap)
       .maxDistance(TAP_SLOP)
+      .onTouchesDown(failOnMultiTouch)
       .onEnd((e, success) => {
         'worklet';
         if (success && !pinching.value && !panning.value) {

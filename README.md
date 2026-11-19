@@ -1,93 +1,76 @@
 # react-native-reanimated-zoomable
 
-Pinch-to-zoom, pan and double-tap-to-zoom for **any** React Native view.
+[![npm](https://img.shields.io/npm/v/react-native-reanimated-zoomable)](https://www.npmjs.com/package/react-native-reanimated-zoomable)
+[![license](https://img.shields.io/npm/l/react-native-reanimated-zoomable)](./LICENSE)
+[![CI](https://github.com/hancandice/react-native-reanimated-zoomable/actions/workflows/ci.yml/badge.svg)](https://github.com/hancandice/react-native-reanimated-zoomable/actions)
 
-- Runs entirely on the UI thread (Reanimated worklets + Gesture Handler) – no JS work per frame
-- Correct focal-point pinch, two-finger pan, fling momentum, rubber-band edges
-- Optional photo-viewer bounds (`panBoundary="content"`), double tap, `ScrollView`/pager friendly mode
-- Works inside `<Modal>` on Android without extra setup
-- New Architecture (Fabric), React 19, Reanimated 4 (and 3), Gesture Handler 3 (and 2), Expo
-- TypeScript, ESM + CommonJS, zero dependencies
+Pinch, pan and double-tap zoom for any view — photo-viewer feel, 100% on the UI thread.
 
-| Android | iOS |
-| :-: | :-: |
-| <img src="./docs/demo-android.gif" width="280" /> | <img src="./docs/demo-ios.gif" width="280" /> |
-
-## Installation
-
-```sh
-npm install react-native-reanimated-zoomable
-# peer dependencies
-npx expo install react-native-reanimated react-native-gesture-handler   # Expo
-npm install react-native-reanimated react-native-gesture-handler        # bare React Native
-```
-
-Follow the Reanimated and Gesture Handler installation guides (Babel plugin for Reanimated 3,
-`react-native-worklets` for Reanimated 4) and wrap your app in `GestureHandlerRootView`.
-
-| Peer | Supported |
-| --- | --- |
-| `react-native` | ≥ 0.76 |
-| `react-native-reanimated` | ≥ 3.16 (incl. 4.x with `react-native-worklets`) |
-| `react-native-gesture-handler` | ≥ 2.20 (incl. 3.x) |
-
-Verified on Android 14 and iOS 26 with Expo SDK 58 (React Native 0.88, New Architecture,
-Reanimated 4.7, Gesture Handler 3.3); type-checked against Reanimated 3.16 / Gesture Handler 2.20 /
-React 18.
-
-## Usage
+<p align="center">
+  <img src="https://raw.githubusercontent.com/hancandice/react-native-reanimated-zoomable/v1.0.0/docs/hero.webp" width="360" alt="Pinching a photo around the fingers, flinging it into the rubber-band edge, and double-tapping to zoom out and in again" />
+</p>
 
 ```tsx
-import { useRef } from 'react';
-import { Button, Image, View } from 'react-native';
-import { Zoomable, type ZoomableRef } from 'react-native-reanimated-zoomable';
-
-export function Photo() {
-  const zoomable = useRef<ZoomableRef>(null);
-
-  return (
-    <View style={{ flex: 1, overflow: 'hidden' }}>
-      <Zoomable
-        ref={zoomable}
-        style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}
-        maxScale={4}
-        panBoundary="content"
-        doubleTapToZoom
-      >
-        <Image
-          source={{ uri: 'https://picsum.photos/id/2/1000/1000' }}
-          style={{ width: 360, height: 360 }}
-        />
-      </Zoomable>
-      <Button title="Reset" onPress={() => zoomable.current?.reset()} />
-    </View>
-  );
-}
+<Zoomable panBoundary="content" doubleTapToZoom maxScale={4}>
+  <Image source={photo} style={{ width: '100%', aspectRatio: 1 }} />
+</Zoomable>
 ```
 
-> The zoomed content is not clipped by the component; wrap it in a view with
-> `overflow: 'hidden'` if it must stay inside a frame.
+- Pinch stays anchored under your fingers; two-finger drag pans
+- Fling momentum, iOS-style rubber band and spring settle, double tap to zoom at the tapped point
+- Plays nicely with `ScrollView`, pagers and bottom sheets (`panRequiresZoom`)
+- Works inside `<Modal>` on Android, New Architecture, Expo, Reanimated 3 & 4
+
+## Install
+
+```sh
+npx expo install react-native-reanimated-zoomable react-native-reanimated react-native-gesture-handler
+```
+
+Bare React Native:
+
+```sh
+npm install react-native-reanimated-zoomable react-native-reanimated react-native-gesture-handler
+```
+
+Then follow the [Reanimated](https://docs.swmansion.com/react-native-reanimated/docs/fundamentals/getting-started/)
+(Reanimated 4 also needs `react-native-worklets`) and
+[Gesture Handler](https://docs.swmansion.com/react-native-gesture-handler/docs/fundamentals/installation)
+setup, and wrap your app in `GestureHandlerRootView`.
+
+| Peer | Range | Verified |
+| --- | --- | --- |
+| `react-native` | ≥ 0.76 | 0.88 (New Architecture) on Android 14 and iOS 26, Expo SDK 58 |
+| `react-native-reanimated` | ≥ 3.16 < 5 | 4.7 on device; 3.16 type-checked (`yarn typecheck:min`) |
+| `react-native-gesture-handler` | ≥ 2.20 < 4 | 3.3 on device; 2.20 type-checked |
+| `react` | ≥ 18.2 | 19.3 on device; 18 type-checked |
 
 ## Props
 
 | Prop | Type | Default | Description |
 | --- | --- | --- | --- |
-| `style` | `ViewStyle` | – | Layout props (size, flex, margin, position, transform, opacity) stay on the container; the rest (background, padding, child alignment…) applies to the zoomed content. |
+| `style` | `StyleProp<AnimatedStyle<ViewStyle>>` | – | Layout props (size, flex, margin, position, transform, opacity, `overflow`, border radius) stay on the container, so `overflow: 'hidden'` clips the zoomed content. Everything else (background, padding, child alignment…) applies to the content. Animated styles are applied to the content; their `transform` is replaced by the zoom. |
 | `initialScale` | `number` | `1` | Scale on mount and after `reset()`. |
 | `minScale` | `number` | `initialScale` | Smallest pinch scale. |
-| `maxScale` | `number` | `initialScale * 2` | Largest pinch scale. Pinching past a limit rubber-bands and springs back. |
-| `panBoundary` | `'threshold' \| 'content' \| 'none'` | `'threshold'` | `threshold`: up to `threshold * scale / minScale` points (classic behavior). `content`: never reveal empty space inside the container edges. `none`: unlimited. |
-| `threshold` | `number` | `300` | Max translation (points, at `minScale`) for `panBoundary="threshold"`. |
-| `shouldCenterAfterThreshold` | `boolean` | `false` | Released past the boundary → animate back to the center instead of to the boundary. |
-| `disableOvershooting` | `boolean` | `false` | No momentum after a fling. |
-| `disablePanResponderReleaseAction` | `boolean` | `false` | Skip all release animations (boundary snap-back, momentum). The scale is still kept within its limits. |
+| `maxScale` | `number` | `initialScale * 2` | Largest pinch scale (unchanged from 0.x; photo viewers usually want 3–5). Pinching past a limit rubber-bands and springs back. |
+| `panBoundary` | `'content' \| 'threshold' \| 'none'` | `'content'` | `content`: never reveal empty space inside the container edges. `threshold`: up to `panThreshold * scale / minScale` points (0.x behaviour). `none`: unlimited. |
+| `panThreshold` | `number` | `300` | Max translation (points, at `minScale`) for `panBoundary="threshold"`. |
+| `centerOnRelease` | `boolean` | `false` | Released past the boundary → animate back to the center instead of to the boundary. |
+| `releaseAnimation` | `boolean` | `true` | Spring back inside the boundary on release. `false` leaves the content where it was released (the scale is still kept within its limits). |
+| `momentum` | `boolean` | `true` | Keep moving after a fling (decay with rubber band at the edges). |
 | `doubleTapToZoom` | `boolean` | `false` | Double tap zooms to `doubleTapScale` at the tapped point, or back to `initialScale`. |
-| `doubleTapScale` | `number` | `maxScale` | Target scale of a double tap. |
+| `doubleTapScale` | `number` | `min(maxScale, 2.5 × initialScale)` | Target scale of a double tap. |
 | `panRequiresZoom` | `boolean` | `false` | One-finger pan only while zoomed in, so a parent `ScrollView`/pager keeps scrolling. |
 | `disabled` | `boolean` | `false` | Disable all gestures. |
-| `onInteractionStart` | `() => void` | – | Called (JS thread) when a gesture starts. |
-| `onInteractionEnd` | `(t: { scale, translate: { x, y } }) => void` | – | Called (JS thread) when a gesture ends, with the transform it settles to. |
+| `onSingleTap` | `({ x, y }) => void` | – | Single tap (JS thread). Waits until a double tap is ruled out; never fires for a pinch. |
+| `onDoubleTap` | `({ x, y }) => void` | – | Double tap (JS thread), with or without `doubleTapToZoom`. |
+| `onTransform` | `worklet ({ scale, translateX, translateY }) => void` | – | Called on the **UI thread** on every frame. Must be a worklet. |
+| `onInteractionStart` | `() => void` | – | A pinch, pan or double tap starts (JS thread). |
+| `onInteractionEnd` | `({ scale, translate: { x, y } }) => void` | – | An interaction ends, with the transform it settles to (JS thread). |
 | `testID` | `string` | – | |
+
+Animations use springs (`damping 26, stiffness 260`) and honour the system **Reduce Motion** setting
+(`ReduceMotion.System`).
 
 ### Ref
 
@@ -100,23 +83,66 @@ interface ZoomableRef {
 }
 ```
 
-All values are clamped to the scale limits and the pan boundary. `focal` is relative to the
-top-left corner of the component.
+Values are clamped to the scale limits and the pan boundary. `focal` is relative to the top-left
+corner of the component. Calls made before the first layout are applied once the size is known.
+
+## Recipes
+
+**Photo viewer with fading chrome** — hide the header while zoomed, without touching the JS thread:
+
+```tsx
+const zoomed = useSharedValue(0);
+const chrome = useAnimatedStyle(() => ({ opacity: withTiming(zoomed.value ? 0 : 1) }));
+
+<Zoomable
+  style={{ flex: 1, backgroundColor: 'black' }}
+  maxScale={5}
+  doubleTapToZoom
+  onSingleTap={toggleChrome}
+  onTransform={(t) => {
+    'worklet';
+    zoomed.value = t.scale > 1.02 ? 1 : 0;
+  }}
+>
+  <Image source={photo} style={{ width: '100%', height: '100%' }} resizeMode="contain" />
+</Zoomable>
+```
+
+**Inside a feed or pager** — the list keeps scrolling until the user zooms in:
+
+```tsx
+<Zoomable style={{ aspectRatio: 1.5, overflow: 'hidden' }} panRequiresZoom doubleTapToZoom>
+  <Image source={photo} style={{ width: '100%', height: '100%' }} />
+</Zoomable>
+```
+
+**Reset when the content changes:** `useEffect(() => ref.current?.reset({ animated: false }), [uri])`.
+
+> **Pressable children and double tap.** Gestures run alongside the touch system, so a `Pressable`
+> inside a `Zoomable` with `doubleTapToZoom` receives `onPress` for *each* tap of a double tap.
+> Prefer `onSingleTap` on the `Zoomable` for tap actions on zoomable content.
 
 ## Migrating from 0.x
 
-1.0 is a rewrite on Gesture Handler (0.x used `PanResponder` on the JS thread).
+1.0 is a rewrite on Gesture Handler and Reanimated worklets (0.x used `PanResponder` on the JS thread).
 
-1. `react-native-reanimated` is now a **peer** dependency (it used to be a regular dependency,
-   which caused “multiple versions of Reanimated” errors) and `react-native-gesture-handler` is a
-   new peer dependency. Install both and wrap your app in `GestureHandlerRootView`.
-2. All 0.x props and `ref.setValues()` keep working. Behavior changes:
-   - a pinch keeps the point under your fingers fixed, and a two-finger drag pans;
-   - the 0.x “overshooting” drift (10 % further over 1 s) is replaced by real fling momentum;
-   - after a pinch the content is brought back inside the boundary;
-   - a `transform` in `style` no longer disables zooming (it now transforms the container).
-3. New: `minScale`, `panBoundary`, `doubleTapToZoom`, `doubleTapScale`, `panRequiresZoom`,
-   `onInteractionStart`/`onInteractionEnd`, `ref.zoomTo()`/`reset()`/`getValues()`.
+1. **Peer dependencies.** `react-native-reanimated` is now a peer dependency (it used to be a regular
+   dependency, which caused "multiple versions of Reanimated" errors) and `react-native-gesture-handler`
+   is a new one. Install both and wrap your app in `GestureHandlerRootView`.
+2. **New defaults.** `panBoundary` is now `'content'` (0.x behaved like `'threshold'`) and a double tap
+   zooms to `min(maxScale, 2.5 × initialScale)`. Pass `panBoundary="threshold"` to keep the old bounds.
+3. **Renamed props** (the old names still work and log a one-time warning in development):
+
+   | 0.x | 1.0 |
+   | --- | --- |
+   | `threshold` | `panThreshold` |
+   | `shouldCenterAfterThreshold` | `centerOnRelease` |
+   | `disablePanResponderReleaseAction` | `releaseAnimation={false}` |
+   | `disableOvershooting` | `momentum={false}` |
+
+4. **Behaviour.** A pinch keeps the point under the fingers in place and a two-finger drag pans; the
+   0.x "overshooting" drift is replaced by fling momentum; releases spring back inside the boundary;
+   a `transform` in `style` no longer disables zooming.
 
 ## Example app
 
@@ -125,9 +151,11 @@ yarn
 yarn example start   # press a / i, or open it in Expo Go (SDK 58)
 ```
 
-It covers all gestures, the three boundary modes, a React Native `<Modal>` and a `ScrollView`.
-Screenshots from emulator runs are in [`docs/screenshots`](./docs/screenshots).
+*Showcase* is a feed with zoomable photos and a full-screen viewer (light and dark mode);
+*Edge cases* covers the bound modes, the ref API, tap callbacks and a React Native `<Modal>`;
+*ScrollView* shows `panRequiresZoom`. Screenshots from emulator runs are in
+[`docs/screenshots`](./docs/screenshots).
 
 ## License
 
-MIT
+MIT · Example photos from [Unsplash](./example/assets/CREDITS.md)

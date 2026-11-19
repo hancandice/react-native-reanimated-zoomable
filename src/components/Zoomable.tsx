@@ -3,6 +3,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   type ForwardedRef,
@@ -23,12 +24,15 @@ import {
 import Animated, {
   cancelAnimation,
   Easing,
+  ReduceMotion,
   runOnJS,
   useAnimatedReaction,
   useAnimatedStyle,
   useSharedValue,
   withDecay,
+  withSpring,
   withTiming,
+  type AnimatedStyle,
 } from 'react-native-reanimated';
 
 import {
@@ -49,10 +53,24 @@ export interface ZoomableTransform {
   translate: { x: number; y: number };
 }
 
+/** Transform passed to the `onTransform` worklet on every frame. */
+export interface ZoomableTransformFrame {
+  scale: number;
+  translateX: number;
+  translateY: number;
+}
+
+/** Position of a tap, relative to the top-left corner of the component. */
+export interface ZoomableTapEvent {
+  x: number;
+  y: number;
+}
+
 export interface ZoomableRef {
   /**
    * Immediately sets the scale and/or translation (no animation).
    * Values are clamped to `[minScale, maxScale]` and to the pan boundary.
+   * Calls made before the first layout are applied once the size is known.
    */
   setValues(values: {
     scale?: number;
@@ -77,11 +95,13 @@ export interface ZoomableProps {
   children?: ReactNode;
   /**
    * Style of the zoomable container. Layout props (size, flex, margins,
-   * position, transform, opacity) stay on the untransformed container;
-   * everything else (background, padding, alignment of the children, …) is
-   * applied to the zoomed content.
+   * position, transform, opacity, overflow, border radius) stay on the
+   * untransformed container, so `overflow: 'hidden'` clips the zoomed content.
+   * Everything else (background, padding, alignment of the children, …) is
+   * applied to the zoomed content. Reanimated animated styles are applied to
+   * the content; their `transform` is overridden by the zoom transform.
    */
-  style?: StyleProp<ViewStyle>;
+  style?: StyleProp<AnimatedStyle<ViewStyle>>;
   /** Scale on mount and after `reset()`. @default 1 */
   initialScale?: number;
   /** Smallest scale reachable with a pinch. @default initialScale */
@@ -89,40 +109,39 @@ export interface ZoomableProps {
   /** Largest scale reachable with a pinch. @default initialScale * 2 */
   maxScale?: number;
   /**
+   * How far the content can be dragged:
+   * - `'content'` – never reveal empty space inside the container edges
+   *   (photo-viewer behavior)
+   * - `'threshold'` – up to `panThreshold * scale / minScale` points (0.x behavior)
+   * - `'none'` – unlimited
+   * @default 'content'
+   */
+  panBoundary?: PanBoundary;
+  /**
    * Maximum translation in points (at `minScale`) when `panBoundary` is
    * `'threshold'`. The allowed distance grows with the zoom factor.
    * @default 300
    */
-  threshold?: number;
-  /**
-   * How far the content can be dragged:
-   * - `'threshold'` – up to `threshold * scale / minScale` points (classic behavior)
-   * - `'content'` – never reveal empty space inside the container edges
-   *   (photo-viewer behavior)
-   * - `'none'` – unlimited
-   * @default 'threshold'
-   */
-  panBoundary?: PanBoundary;
-  /** Disables all gestures. @default false */
-  disabled?: boolean;
+  panThreshold?: number;
   /**
    * When the content is released beyond the boundary, animate it back to the
    * center instead of to the boundary. @default false
    */
-  shouldCenterAfterThreshold?: boolean;
+  centerOnRelease?: boolean;
   /**
-   * Skip the release animations (boundary snap-back and momentum). The scale
-   * is still brought back inside `[minScale, maxScale]`. @default false
+   * Animate the content back inside the boundary when it is released outside
+   * of it. When `false` it stays where it was released (the scale is still
+   * brought back inside `[minScale, maxScale]`). @default true
    */
-  disablePanResponderReleaseAction?: boolean;
-  /** Disables momentum (fling) after a pan is released. @default false */
-  disableOvershooting?: boolean;
+  releaseAnimation?: boolean;
+  /** Keep moving (with decay) after a fling. @default true */
+  momentum?: boolean;
   /**
    * Double tap zooms in to `doubleTapScale` at the tapped point, or back to
    * `initialScale` when already zoomed. @default false
    */
   doubleTapToZoom?: boolean;
-  /** Target scale of a double tap. @default maxScale */
+  /** Target scale of a double tap. @default min(maxScale, 2.5 * initialScale) */
   doubleTapScale?: number;
   /**
    * Only allow one-finger panning while zoomed in. Use it inside a
@@ -130,6 +149,21 @@ export interface ZoomableProps {
    * drags while the content is not zoomed. @default false
    */
   panRequiresZoom?: boolean;
+  /** Disables all gestures. @default false */
+  disabled?: boolean;
+  /**
+   * Called (JS thread) on a single tap. When double tap is enabled it waits
+   * until a double tap is ruled out.
+   */
+  onSingleTap?: (event: ZoomableTapEvent) => void;
+  /** Called (JS thread) on a double tap, whether or not `doubleTapToZoom` is on. */
+  onDoubleTap?: (event: ZoomableTapEvent) => void;
+  /**
+   * Worklet called on the UI thread whenever the transform changes – use it to
+   * fade chrome or drive swipe-to-dismiss without touching the JS thread.
+   * Must be a worklet (`'worklet'` directive).
+   */
+  onTransform?: (transform: ZoomableTransformFrame) => void;
   /** Called on the JS thread when a pinch, pan or double tap begins. */
   onInteractionStart?: () => void;
   /**
@@ -139,25 +173,58 @@ export interface ZoomableProps {
   onInteractionEnd?: (transform: ZoomableTransform) => void;
   /** Used to locate this view in end-to-end tests. */
   testID?: string;
+
+  /** @deprecated Renamed to `panThreshold`. */
+  threshold?: number;
+  /** @deprecated Renamed to `centerOnRelease`. */
+  shouldCenterAfterThreshold?: boolean;
+  /** @deprecated Use `releaseAnimation={false}`. */
+  disablePanResponderReleaseAction?: boolean;
+  /** @deprecated Use `momentum={false}`. */
+  disableOvershooting?: boolean;
 }
 
 const EPSILON = 0.001;
-const SETTLE_DURATION = 220;
-const ZOOM_DURATION = 260;
 const SCALE_RUBBER_BAND = 0.35;
 const PAN_SLOP = 10;
-const DECELERATION = 0.997;
+const TAP_SLOP = 10;
+const DECELERATION = 0.998;
 
-const timing = (toValue: number, duration: number) => {
-  'worklet';
-  return withTiming(toValue, { duration, easing: Easing.out(Easing.cubic) });
+const SPRING = {
+  mass: 1,
+  damping: 26,
+  stiffness: 260,
+  reduceMotion: ReduceMotion.System,
 };
+const ZOOM_TIMING = {
+  duration: 280,
+  easing: Easing.bezier(0.2, 0, 0, 1),
+  reduceMotion: ReduceMotion.System,
+};
+
+const spring = (toValue: number) => {
+  'worklet';
+  return withSpring(toValue, SPRING);
+};
+
+const zoomTiming = (toValue: number) => {
+  'worklet';
+  return withTiming(toValue, ZOOM_TIMING);
+};
+
+const warned = new Set<string>();
+function warnOnce(message: string) {
+  if (__DEV__ && !warned.has(message)) {
+    warned.add(message);
+    console.warn(`react-native-reanimated-zoomable: ${message}`);
+  }
+}
 
 const isAnimatedStyle = (style: unknown): boolean =>
   typeof style === 'object' && style !== null && 'viewDescriptors' in style;
 
 /** Separates plain style objects (which are split) from Reanimated styles. */
-const partitionStyle = (style: StyleProp<ViewStyle>) => {
+const partitionStyle = (style: ZoomableProps['style']) => {
   const plain: StyleProp<ViewStyle>[] = [];
   const animated: ViewStyle[] = [];
   const visit = (s: unknown) => {
@@ -179,35 +246,65 @@ const partitionStyle = (style: StyleProp<ViewStyle>) => {
   };
 };
 
+function finiteOr(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
 const ZoomableComponent = (
-  {
+  props: ZoomableProps,
+  ref: ForwardedRef<ZoomableRef>
+) => {
+  const {
     children,
     style,
     initialScale: initialScaleProp,
     minScale: minScaleProp,
     maxScale: maxScaleProp,
-    threshold = 300,
-    panBoundary = 'threshold',
-    disabled = false,
-    shouldCenterAfterThreshold = false,
-    disablePanResponderReleaseAction = false,
-    disableOvershooting = false,
+    panBoundary = 'content',
     doubleTapToZoom = false,
     doubleTapScale: doubleTapScaleProp,
     panRequiresZoom = false,
+    disabled = false,
+    onSingleTap,
+    onDoubleTap,
+    onTransform,
     onInteractionStart,
     onInteractionEnd,
     testID,
-  }: ZoomableProps,
-  ref: ForwardedRef<ZoomableRef>
-) => {
+  } = props;
+
+  // legacy names (0.x) keep working
+  if (props.threshold !== undefined) {
+    warnOnce('`threshold` is deprecated, use `panThreshold`.');
+  }
+  if (props.shouldCenterAfterThreshold !== undefined) {
+    warnOnce(
+      '`shouldCenterAfterThreshold` is deprecated, use `centerOnRelease`.'
+    );
+  }
+  if (props.disablePanResponderReleaseAction !== undefined) {
+    warnOnce(
+      '`disablePanResponderReleaseAction` is deprecated, use `releaseAnimation={false}`.'
+    );
+  }
+  if (props.disableOvershooting !== undefined) {
+    warnOnce('`disableOvershooting` is deprecated, use `momentum={false}`.');
+  }
+  const threshold = props.panThreshold ?? props.threshold ?? 300;
+  const centerOnRelease =
+    props.centerOnRelease ?? props.shouldCenterAfterThreshold ?? false;
+  const releaseAnimation =
+    props.releaseAnimation ??
+    !(props.disablePanResponderReleaseAction ?? false);
+  const momentum = props.momentum ?? !(props.disableOvershooting ?? false);
+
   const {
     initial: initialScale,
     min: minScale,
     max: maxScale,
   } = normalizeScales(initialScaleProp, minScaleProp, maxScaleProp);
   const doubleTapScale = clamp(
-    doubleTapScaleProp ?? maxScale,
+    doubleTapScaleProp ?? Math.min(maxScale, initialScale * 2.5),
     minScale,
     maxScale
   );
@@ -224,37 +321,61 @@ const ZoomableComponent = (
   const centerX = useSharedValue(0);
   const centerY = useSharedValue(0);
 
-  // gesture bookkeeping (UI thread only)
-  const startScale = useSharedValue(1);
-  const startRawScale = useSharedValue(1);
+  // pinch bookkeeping (UI thread only)
+  const pinchScale = useSharedValue(1);
+  const pinchRawScale = useSharedValue(1);
   const rawScale = useSharedValue(1);
-  const startPinch = useSharedValue(1);
+  const pinchStart = useSharedValue(1);
   const pointerCount = useSharedValue(0);
-  const startX = useSharedValue(0);
-  const startY = useSharedValue(0);
-  const startFocalX = useSharedValue(0);
-  const startFocalY = useSharedValue(0);
+  const pinchX = useSharedValue(0);
+  const pinchY = useSharedValue(0);
+  const pinchFocalX = useSharedValue(0);
+  const pinchFocalY = useSharedValue(0);
   const lastFocalX = useSharedValue(0);
   const lastFocalY = useSharedValue(0);
   const pinching = useSharedValue(false);
+  // pan bookkeeping (separate anchors, see pinch onFinalize)
+  const panX = useSharedValue(0);
+  const panY = useSharedValue(0);
+  const panTranslationX = useSharedValue(0);
+  const panTranslationY = useSharedValue(0);
   const panning = useSharedValue(false);
   const touchStartX = useSharedValue(0);
   const touchStartY = useSharedValue(0);
 
   // Latest callbacks, so that inline functions do not rebuild the gestures.
-  const listeners = useRef({ onInteractionStart, onInteractionEnd });
-  listeners.current = { onInteractionStart, onInteractionEnd };
+  const listeners = useRef({
+    onInteractionStart,
+    onInteractionEnd,
+    onSingleTap,
+    onDoubleTap,
+  });
+  useLayoutEffect(() => {
+    listeners.current = {
+      onInteractionStart,
+      onInteractionEnd,
+      onSingleTap,
+      onDoubleTap,
+    };
+  });
 
   const emitStart = useCallback(() => {
     listeners.current.onInteractionStart?.();
   }, []);
-
   const emitEnd = useCallback((s: number, x: number, y: number) => {
     listeners.current.onInteractionEnd?.({ scale: s, translate: { x, y } });
+  }, []);
+  const emitSingleTap = useCallback((x: number, y: number) => {
+    listeners.current.onSingleTap?.({ x, y });
+  }, []);
+  const emitDoubleTap = useCallback((x: number, y: number) => {
+    listeners.current.onDoubleTap?.({ x, y });
   }, []);
 
   const hasStartListener = onInteractionStart != null;
   const hasEndListener = onInteractionEnd != null;
+  const hasSingleTap = onSingleTap != null;
+  const hasDoubleTap = onDoubleTap != null;
 
   const gesture = useMemo(() => {
     const stopAnimations = () => {
@@ -278,9 +399,9 @@ const ZoomableComponent = (
       }
     };
 
-    const limit = (length: number, s: number, t: number) => {
+    const limit = (length: number, s: number) => {
       'worklet';
-      return maxTranslate(panBoundary, length, s, minScale, t);
+      return maxTranslate(panBoundary, length, s, minScale, safeThreshold);
     };
 
     /**
@@ -309,35 +430,35 @@ const ZoomableComponent = (
       );
 
       if (scaleChanged) {
-        scale.value = timing(targetScale, SETTLE_DURATION);
+        scale.value = spring(targetScale);
       }
 
-      if (disablePanResponderReleaseAction) {
+      if (!releaseAnimation) {
         if (scaleChanged) {
-          translateX.value = timing(x, SETTLE_DURATION);
-          translateY.value = timing(y, SETTLE_DURATION);
+          translateX.value = spring(x);
+          translateY.value = spring(y);
         }
         notifyEnd(targetScale, x, y);
         return;
       }
 
-      const limitX = limit(width.value, targetScale, safeThreshold);
-      const limitY = limit(height.value, targetScale, safeThreshold);
+      const limitX = limit(width.value, targetScale);
+      const limitY = limit(height.value, targetScale);
       const overflow =
         Math.abs(x) > limitX + EPSILON || Math.abs(y) > limitY + EPSILON;
 
       if (overflow) {
-        if (shouldCenterAfterThreshold) {
+        if (centerOnRelease) {
           x = 0;
           y = 0;
         } else {
           x = clamp(x, -limitX, limitX);
           y = clamp(y, -limitY, limitY);
         }
-        translateX.value = timing(x, SETTLE_DURATION);
-        translateY.value = timing(y, SETTLE_DURATION);
+        translateX.value = spring(x);
+        translateY.value = spring(y);
       } else if (
-        !disableOvershooting &&
+        momentum &&
         !scaleChanged &&
         (Math.abs(velocityX) > 1 || Math.abs(velocityY) > 1)
       ) {
@@ -348,8 +469,15 @@ const ZoomableComponent = (
                 velocity,
                 deceleration: DECELERATION,
                 clamp: [-max, max],
+                rubberBandEffect: true,
+                rubberBandFactor: 0.6,
+                reduceMotion: ReduceMotion.System,
               })
-            : withDecay({ velocity, deceleration: DECELERATION });
+            : withDecay({
+                velocity,
+                deceleration: DECELERATION,
+                reduceMotion: ReduceMotion.System,
+              });
         };
         translateX.value = decay(velocityX, limitX);
         translateY.value = decay(velocityY, limitY);
@@ -358,8 +486,8 @@ const ZoomableComponent = (
         x = clamp(x + velocityX * travel, -limitX, limitX);
         y = clamp(y + velocityY * travel, -limitY, limitY);
       } else if (scaleChanged) {
-        translateX.value = timing(x, SETTLE_DURATION);
-        translateY.value = timing(y, SETTLE_DURATION);
+        translateX.value = spring(x);
+        translateY.value = spring(y);
       }
 
       notifyEnd(targetScale, x, y);
@@ -369,19 +497,19 @@ const ZoomableComponent = (
     const anchorPinch = (
       focalX: number,
       focalY: number,
-      pinchScale: number,
+      eventScale: number,
       pointers: number
     ) => {
       'worklet';
-      startScale.value = scale.value;
-      startRawScale.value = rawScale.value;
-      startPinch.value = pinchScale > 0 ? pinchScale : 1;
-      startX.value = translateX.value;
-      startY.value = translateY.value;
-      startFocalX.value = focalX - centerX.value;
-      startFocalY.value = focalY - centerY.value;
-      lastFocalX.value = startFocalX.value;
-      lastFocalY.value = startFocalY.value;
+      pinchScale.value = scale.value;
+      pinchRawScale.value = rawScale.value;
+      pinchStart.value = eventScale > 0 ? eventScale : 1;
+      pinchX.value = translateX.value;
+      pinchY.value = translateY.value;
+      pinchFocalX.value = focalX - centerX.value;
+      pinchFocalY.value = focalY - centerY.value;
+      lastFocalX.value = pinchFocalX.value;
+      lastFocalY.value = pinchFocalY.value;
       pointerCount.value = pointers;
     };
 
@@ -410,7 +538,7 @@ const ZoomableComponent = (
           anchorPinch(e.focalX, e.focalY, e.scale, e.numberOfPointers);
           return;
         }
-        rawScale.value = (startRawScale.value * e.scale) / startPinch.value;
+        rawScale.value = (pinchRawScale.value * e.scale) / pinchStart.value;
         const s = rubberBandScale(
           rawScale.value,
           minScale,
@@ -423,22 +551,22 @@ const ZoomableComponent = (
         lastFocalY.value = fy;
         let x = translateForFocal(
           fx,
-          startFocalX.value,
+          pinchFocalX.value,
           s,
-          startScale.value,
-          startX.value
+          pinchScale.value,
+          pinchX.value
         );
         let y = translateForFocal(
           fy,
-          startFocalY.value,
+          pinchFocalY.value,
           s,
-          startScale.value,
-          startY.value
+          pinchScale.value,
+          pinchY.value
         );
         if (panBoundary === 'content') {
           const cs = clamp(s, minScale, maxScale);
-          x = rubberBand(x, limit(width.value, cs, 0));
-          y = rubberBand(y, limit(height.value, cs, 0));
+          x = rubberBand(x, limit(width.value, cs), width.value);
+          y = rubberBand(y, limit(height.value, cs), height.value);
         }
         scale.value = s;
         translateX.value = x;
@@ -450,7 +578,12 @@ const ZoomableComponent = (
           return;
         }
         pinching.value = false;
-        if (!panning.value) {
+        if (panning.value) {
+          // The pan kept tracking the remaining finger (iOS): continue from the
+          // current position instead of jumping back to where the pan started.
+          panX.value = translateX.value - panTranslationX.value;
+          panY.value = translateY.value - panTranslationY.value;
+        } else {
           settle(0, 0);
         }
       });
@@ -486,7 +619,8 @@ const ZoomableComponent = (
         if (dx * dx + dy * dy < PAN_SLOP * PAN_SLOP) {
           return;
         }
-        if (scale.value > minScale + EPSILON) {
+        // minScale <= initialScale, so "zoomed in" means above initialScale
+        if (scale.value > initialScale + EPSILON) {
           manager.activate();
         } else {
           manager.fail();
@@ -494,42 +628,49 @@ const ZoomableComponent = (
       })
       .onStart(() => {
         'worklet';
-        if (pinching.value) {
-          return;
-        }
         notifyStart();
-        stopAnimations();
+        if (!pinching.value) {
+          stopAnimations();
+        }
         panning.value = true;
-        startX.value = translateX.value;
-        startY.value = translateY.value;
+        panTranslationX.value = 0;
+        panTranslationY.value = 0;
+        panX.value = translateX.value;
+        panY.value = translateY.value;
       })
       .onUpdate((e) => {
         'worklet';
+        panTranslationX.value = e.translationX;
+        panTranslationY.value = e.translationY;
         if (!panning.value || pinching.value) {
           return;
         }
-        let x = startX.value + e.translationX;
-        let y = startY.value + e.translationY;
+        let x = panX.value + e.translationX;
+        let y = panY.value + e.translationY;
         if (panBoundary === 'content') {
           const s = scale.value;
-          x = rubberBand(x, limit(width.value, s, 0));
-          y = rubberBand(y, limit(height.value, s, 0));
+          x = rubberBand(x, limit(width.value, s), width.value);
+          y = rubberBand(y, limit(height.value, s), height.value);
         }
         translateX.value = x;
         translateY.value = y;
       })
-      .onEnd((e) => {
+      .onEnd((e, success) => {
         'worklet';
-        if (!panning.value || pinching.value) {
+        if (!panning.value) {
           return;
         }
         panning.value = false;
-        settle(e.velocityX, e.velocityY);
+        if (pinching.value) {
+          return;
+        }
+        // a cancelled pan (e.g. taken over by a parent) must not fling
+        settle(success ? e.velocityX : 0, success ? e.velocityY : 0);
       })
       .onFinalize(() => {
         'worklet';
         if (panning.value) {
-          // cancelled (e.g. a second finger turned it into a pinch)
+          // cancelled before it ended (e.g. a second finger on Android)
           panning.value = false;
           if (!pinching.value) {
             settle(0, 0);
@@ -538,12 +679,18 @@ const ZoomableComponent = (
       });
 
     const doubleTap = Gesture.Tap()
-      .enabled(!disabled && doubleTapToZoom)
+      .enabled(!disabled && (doubleTapToZoom || hasDoubleTap))
       .numberOfTaps(2)
       .maxDistance(24)
       .onEnd((e, success) => {
         'worklet';
         if (!success || pinching.value || panning.value) {
+          return;
+        }
+        if (hasDoubleTap) {
+          runOnJS(emitDoubleTap)(e.x, e.y);
+        }
+        if (!doubleTapToZoom) {
           return;
         }
         notifyStart();
@@ -573,24 +720,42 @@ const ZoomableComponent = (
             safeThreshold
           );
         }
-        scale.value = timing(targetScale, ZOOM_DURATION);
-        translateX.value = timing(x, ZOOM_DURATION);
-        translateY.value = timing(y, ZOOM_DURATION);
+        scale.value = zoomTiming(targetScale);
+        translateX.value = zoomTiming(x);
+        translateY.value = zoomTiming(y);
         notifyEnd(targetScale, x, y);
       });
 
-    return Gesture.Simultaneous(pinch, pan, doubleTap);
+    const singleTap = Gesture.Tap()
+      .enabled(!disabled && hasSingleTap)
+      .maxDistance(TAP_SLOP)
+      .onEnd((e, success) => {
+        'worklet';
+        if (success && !pinching.value && !panning.value) {
+          runOnJS(emitSingleTap)(e.x, e.y);
+        }
+      });
+
+    // the single tap waits until the double tap has failed
+    return Gesture.Simultaneous(
+      pinch,
+      pan,
+      Gesture.Exclusive(doubleTap, singleTap)
+    );
   }, [
+    centerOnRelease,
     centerX,
     centerY,
-    disableOvershooting,
-    disablePanResponderReleaseAction,
     disabled,
     doubleTapScale,
     doubleTapToZoom,
+    emitDoubleTap,
     emitEnd,
+    emitSingleTap,
     emitStart,
+    hasDoubleTap,
     hasEndListener,
+    hasSingleTap,
     hasStartListener,
     height,
     initialScale,
@@ -598,22 +763,27 @@ const ZoomableComponent = (
     lastFocalY,
     maxScale,
     minScale,
+    momentum,
     panBoundary,
     panRequiresZoom,
+    panTranslationX,
+    panTranslationY,
+    panX,
+    panY,
     panning,
+    pinchFocalX,
+    pinchFocalY,
+    pinchRawScale,
+    pinchScale,
+    pinchStart,
+    pinchX,
+    pinchY,
     pinching,
+    pointerCount,
+    rawScale,
+    releaseAnimation,
     safeThreshold,
     scale,
-    shouldCenterAfterThreshold,
-    startFocalX,
-    startFocalY,
-    startScale,
-    startRawScale,
-    rawScale,
-    startPinch,
-    pointerCount,
-    startX,
-    startY,
     touchStartX,
     touchStartY,
     translateX,
@@ -655,18 +825,67 @@ const ZoomableComponent = (
     }
   );
 
-  // Keep the scale valid when the limits change.
+  // UI-thread transform listener
+  useAnimatedReaction(
+    () => ({
+      scale: scale.value,
+      translateX: translateX.value,
+      translateY: translateY.value,
+    }),
+    (frame) => {
+      if (onTransform) {
+        onTransform(frame);
+      }
+    }
+  );
+
+  // Keep scale and translation valid when the limits change.
   useEffect(() => {
     if (pinching.value || panning.value) {
       return;
     }
-    const s = scale.value;
-    const next = clamp(s, minScale, maxScale);
-    if (Math.abs(next - s) > EPSILON) {
+    const s = clamp(scale.value, minScale, maxScale);
+    const x = clampTranslate(
+      translateX.value,
+      panBoundary,
+      width.value,
+      s,
+      minScale,
+      safeThreshold
+    );
+    const y = clampTranslate(
+      translateY.value,
+      panBoundary,
+      height.value,
+      s,
+      minScale,
+      safeThreshold
+    );
+    if (Math.abs(s - scale.value) > EPSILON) {
       cancelAnimation(scale);
-      scale.value = next;
+      scale.value = s;
     }
-  }, [maxScale, minScale, panning, pinching, scale]);
+    if (width.value > 0 && Math.abs(x - translateX.value) > EPSILON) {
+      cancelAnimation(translateX);
+      translateX.value = x;
+    }
+    if (height.value > 0 && Math.abs(y - translateY.value) > EPSILON) {
+      cancelAnimation(translateY);
+      translateY.value = y;
+    }
+  }, [
+    height,
+    maxScale,
+    minScale,
+    panBoundary,
+    panning,
+    pinching,
+    safeThreshold,
+    scale,
+    translateX,
+    translateY,
+    width,
+  ]);
 
   const applyTransform = useCallback(
     (s: number, x: number, y: number, animated: boolean) => {
@@ -691,9 +910,9 @@ const ZoomableComponent = (
       cancelAnimation(translateX);
       cancelAnimation(translateY);
       if (animated) {
-        scale.value = timing(targetScale, ZOOM_DURATION);
-        translateX.value = timing(tx, ZOOM_DURATION);
-        translateY.value = timing(ty, ZOOM_DURATION);
+        scale.value = zoomTiming(targetScale);
+        translateX.value = zoomTiming(tx);
+        translateY.value = zoomTiming(ty);
       } else {
         scale.value = targetScale;
         translateX.value = tx;
@@ -713,43 +932,58 @@ const ZoomableComponent = (
     ]
   );
 
+  // Ref calls made before the first layout are replayed once the size is known
+  // (otherwise the translation would be clamped against a 0×0 container).
+  const laidOut = useRef(false);
+  const pending = useRef<(() => void) | null>(null);
+  const whenLaidOut = useCallback((call: () => void) => {
+    if (laidOut.current) {
+      call();
+    } else {
+      pending.current = call;
+    }
+  }, []);
+
   useImperativeHandle(
     ref,
     () => ({
-      setValues: ({ scale: nextScale, translate } = {}) => {
-        applyTransform(
-          finiteOr(nextScale, scale.value),
-          finiteOr(translate?.x, translateX.value),
-          finiteOr(translate?.y, translateY.value),
-          false
-        );
-      },
-      zoomTo: (nextScale, options) => {
-        const s = scale.value;
-        const target = clamp(finiteOr(nextScale, s), minScale, maxScale);
-        if (options?.focal) {
-          const fx = options.focal.x - centerX.value;
-          const fy = options.focal.y - centerY.value;
+      setValues: ({ scale: nextScale, translate } = {}) =>
+        whenLaidOut(() =>
           applyTransform(
-            target,
-            translateForFocal(fx, fx, target, s, translateX.value),
-            translateForFocal(fy, fy, target, s, translateY.value),
-            options.animated ?? true
-          );
-        } else {
-          // keep the point at the center of the container in place
-          const ratio = s > 0 ? target / s : 1;
-          applyTransform(
-            target,
-            translateX.value * ratio,
-            translateY.value * ratio,
-            options?.animated ?? true
-          );
-        }
-      },
-      reset: (options) => {
-        applyTransform(initialScale, 0, 0, options?.animated ?? true);
-      },
+            finiteOr(nextScale, scale.value),
+            finiteOr(translate?.x, translateX.value),
+            finiteOr(translate?.y, translateY.value),
+            false
+          )
+        ),
+      zoomTo: (nextScale, options) =>
+        whenLaidOut(() => {
+          const s = scale.value;
+          const target = clamp(finiteOr(nextScale, s), minScale, maxScale);
+          if (options?.focal) {
+            const fx = options.focal.x - centerX.value;
+            const fy = options.focal.y - centerY.value;
+            applyTransform(
+              target,
+              translateForFocal(fx, fx, target, s, translateX.value),
+              translateForFocal(fy, fy, target, s, translateY.value),
+              options.animated ?? true
+            );
+          } else {
+            // keep the point at the center of the container in place
+            const ratio = s > 0 ? target / s : 1;
+            applyTransform(
+              target,
+              translateX.value * ratio,
+              translateY.value * ratio,
+              options?.animated ?? true
+            );
+          }
+        }),
+      reset: (options) =>
+        whenLaidOut(() =>
+          applyTransform(initialScale, 0, 0, options?.animated ?? true)
+        ),
       getValues: () => ({
         scale: scale.value,
         translate: { x: translateX.value, y: translateY.value },
@@ -765,6 +999,7 @@ const ZoomableComponent = (
       scale,
       translateX,
       translateY,
+      whenLaidOut,
     ]
   );
 
@@ -774,6 +1009,12 @@ const ZoomableComponent = (
       height.value = layout.height;
       centerX.value = layout.x + layout.width / 2;
       centerY.value = layout.y + layout.height / 2;
+      if (!laidOut.current) {
+        laidOut.current = true;
+        const call = pending.current;
+        pending.current = null;
+        call?.();
+      }
     },
     [centerX, centerY, height, width]
   );
@@ -791,8 +1032,9 @@ const ZoomableComponent = (
     [style]
   );
 
-  // A nested GestureHandlerRootView is a plain View when an outer one exists;
-  // it makes gestures work inside <Modal> on Android without extra setup.
+  // A nested GestureHandlerRootView behaves like a plain view under the app's
+  // root view (Android logs that it is "already enabled"); on its own, inside
+  // a React Native <Modal>, it is what lets Android deliver the gestures.
   return (
     <GestureHandlerRootView style={outer} testID={testID}>
       <GestureDetector gesture={gesture}>
@@ -808,10 +1050,6 @@ const ZoomableComponent = (
     </GestureHandlerRootView>
   );
 };
-
-function finiteOr(value: number | undefined, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
-}
 
 const styles = StyleSheet.create({
   fill: {

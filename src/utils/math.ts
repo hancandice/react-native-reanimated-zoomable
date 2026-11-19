@@ -85,13 +85,15 @@ export function clampTranslate(
 }
 
 /**
- * Applies rubber-band resistance to movement beyond `limit` (iOS-like
- * overscroll). `factor` 0 = hard stop, 1 = no resistance.
+ * iOS-style rubber band: movement beyond `limit` is resisted with
+ * `offset = (1 - 1 / (x * 0.55 / d + 1)) * d`, where `x` is the overshoot and
+ * `d` the size of the container on that axis.
  */
 export function rubberBand(
   value: number,
   limit: number,
-  factor: number = 0.55
+  dimension: number,
+  coefficient: number = 0.55
 ): number {
   'worklet';
   if (!Number.isFinite(limit)) {
@@ -101,7 +103,13 @@ export function rubberBand(
   if (abs <= limit) {
     return value;
   }
-  return Math.sign(value) * (limit + (abs - limit) * factor);
+  if (!(dimension > 0)) {
+    return Math.sign(value) * limit;
+  }
+  const overshoot = abs - limit;
+  const offset =
+    (1 - 1 / ((overshoot * coefficient) / dimension + 1)) * dimension;
+  return Math.sign(value) * (limit + offset);
 }
 
 /**
@@ -187,6 +195,17 @@ const OUTER_KEYS: Record<string, true> = {
   aspectRatio: true,
   zIndex: true,
   display: true,
+  overflow: true,
+  borderRadius: true,
+  borderTopLeftRadius: true,
+  borderTopRightRadius: true,
+  borderBottomLeftRadius: true,
+  borderBottomRightRadius: true,
+  borderTopStartRadius: true,
+  borderTopEndRadius: true,
+  borderBottomStartRadius: true,
+  borderBottomEndRadius: true,
+  borderCurve: true,
   transform: true,
   transformOrigin: true,
   opacity: true,

@@ -78,16 +78,22 @@ describe('maxTranslate / clampTranslate', () => {
 
 describe('rubberBand', () => {
   it('passes values inside the limit', () => {
-    expect(rubberBand(50, 100)).toBe(50);
-    expect(rubberBand(-50, 100)).toBe(-50);
+    expect(rubberBand(50, 100, 400)).toBe(50);
+    expect(rubberBand(-50, 100, 400)).toBe(-50);
   });
-  it('resists beyond the limit', () => {
-    const v = rubberBand(200, 100, 0.5);
-    expect(v).toBe(150);
-    expect(rubberBand(-200, 100, 0.5)).toBe(-150);
+  it('follows the iOS curve beyond the limit', () => {
+    const d = 400;
+    const x = 200;
+    const expected = 100 + (1 - 1 / ((x * 0.55) / d + 1)) * d;
+    expect(rubberBand(300, 100, d)).toBeCloseTo(expected, 10);
+    expect(rubberBand(-300, 100, d)).toBeCloseTo(-expected, 10);
+    // resistance: never moves as far as the finger, never reaches d past the limit
+    expect(rubberBand(300, 100, d)).toBeLessThan(300);
+    expect(rubberBand(1e9, 100, d)).toBeLessThan(100 + d);
   });
-  it('is a no-op for infinite limits', () => {
-    expect(rubberBand(1e6, Infinity)).toBe(1e6);
+  it('is a no-op for infinite limits and a hard stop without a dimension', () => {
+    expect(rubberBand(1e6, Infinity, 400)).toBe(1e6);
+    expect(rubberBand(150, 100, 0)).toBe(100);
   });
 });
 
@@ -148,6 +154,14 @@ describe('splitStyle', () => {
       padding: 8,
       justifyContent: 'center',
     });
+  });
+  it('clips on the outer view', () => {
+    const { outer, inner } = splitStyle({
+      overflow: 'hidden',
+      borderRadius: 8,
+    });
+    expect(outer).toEqual({ overflow: 'hidden', borderRadius: 8 });
+    expect(inner).toEqual({});
   });
   it('handles undefined', () => {
     expect(splitStyle(undefined)).toEqual({ outer: {}, inner: {} });

@@ -128,10 +128,12 @@ function Demo({ onClose }: { onClose?: () => void }) {
           onRequestClose={() => setModal(false)}
         >
           {/* No GestureHandlerRootView here on purpose: Zoomable handles it. */}
-          <SafeAreaView style={styles.flex}>
-            <Text style={styles.title}>Inside a React Native Modal</Text>
-            <Demo onClose={() => setModal(false)} />
-          </SafeAreaView>
+          <SafeAreaProvider>
+            <SafeAreaView style={styles.flex}>
+              <Text style={styles.title}>Inside a React Native Modal</Text>
+              <Demo onClose={() => setModal(false)} />
+            </SafeAreaView>
+          </SafeAreaProvider>
         </Modal>
       )}
     </View>
